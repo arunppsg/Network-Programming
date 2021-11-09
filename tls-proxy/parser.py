@@ -1,44 +1,24 @@
+from http.server import BaseHTTPRequestHandler
+from io import BytesIO
 
 # RFC 2616 describes the HTTP/1.1 protocol
-# https://stackoverflow.com/questions/4685217/parse-raw-http-headers
-HTTPRequestMethods = [
-    'OPTIONS','GET', 'HEAD', 'POST',
-    'PUT', 'DELETE', 'CONNECT', 'TRACE'
-]
 
-CRLF = '\r\n'
-COLON = ':'
-WHITESPACE = ' '
-COMMA = ','
-DOT = '.'
-SLASH = '/'
-HTTP_1_1 = 'HTTP/1.1'
+class HTTPRequest(BaseHTTPRequestHandler):
+    """
+    Reference: https://stackoverflow.com/questions/4685217/parse-raw-http-headers
+    """
+    def __init__(self, request_text):
+        self.rfile = BytesIO(request_text)
+        self.raw_requestline = self.rfile.readline()
+        self.error_code = self.error_message = None
+        self.parse_request()
 
-def find_http_line(raw):
-    pos = raw.find(CRLF)
-    if pos == -1:
-        return None, raw
-    else:
-        line = raw[:pos]
-        rest = raw[pos+len(CRLF):]
-        return line, rest
-
-def get_request_uri(raw):
-    return uri
+    def send_error(self, code, message):
+        self.error_code = code
+        self.error_message = message
 
 def parse_response(response):
     return
 
 def parse_request(request):
-    request = request.decode('iso-8859-1')
-    more = True if len(raw) > 0 else False
-    while more:
-        
-    header, body = find_http_line(request)
-    if header is None:
-        return
-    uri = get_request_uri(body) 
-    request = request.split('\r\n')
-    if request[0] == 'CONNECT':
-        
-    return
+    request = HTTPRequest(buf)
