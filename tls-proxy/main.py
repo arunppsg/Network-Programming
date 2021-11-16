@@ -1,14 +1,16 @@
 """
-A HTTP Proxy
+A HTTPS Proxy
 
-Based on https://github.com/abhinavsingh/proxy.py/commit/cffbc48c062423420f6c1e209ad3675a9354e698
+Gist: We create a SSL Server which accepts downstream connection. Then,
+an upstream SSL Client for handling the request of the downstream client.
 """
 
 import os
 import socket
+import ssl
 import select
 import datetime
-import multiprocessing
+from threading import Thread
 from io import BytesIO
 from http.server import BaseHTTPRequestHandler
 import logging
@@ -50,10 +52,12 @@ class Connection(object):
 class Server(Connection):
     def __init__(self, host, port):
         super().__init__('server')
-        self.addr = (host, int(port))
+        self.addr = (host, port)
 
-    def connect(self): 
-        self.conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM) 
+    def connect(self):
+        self.context = ssl.create_default_context()
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.conn = self.context.wrap_socket(self.sock, server_hostname=self.addr[0])
         self.conn.connect(self.addr)
 
 class Client(Connection):
@@ -61,7 +65,6 @@ class Client(Connection):
         super().__init__('client')
         self.conn = conn
         self.addr = addr
-
 
 class HTTPRequestHandler(BaseHTTPRequestHandler):
     def __init__(self, request_text):
@@ -85,11 +88,11 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
         if len(host_port) == 1:
             return host_port[0], 80
         else:
-            return host_port[0], host_port[1]
+            return host_port[0], int(host_port[1])
 
-class Proxy(multiprocessing.Process):
+class Proxy(Thread):
     def __init__(self, client):
-        super(Proxy, self).__init__()
+        Thread.__init__(self)
         self.start_time = self._now()
         self.last_activity = self.start_time
 
@@ -106,7 +109,7 @@ class Proxy(multiprocessing.Process):
         return self._inactive_for() > 30
 
     def _process(self):
-        #print ("Processing connection \n")
+        # print ("Processing connection \n")
         while True:
             rlist, wlist, xlist = self._get_waitable_list()
             r, w, x = select.select(rlist, wlist, xlist, 1)
@@ -129,15 +132,15 @@ class Proxy(multiprocessing.Process):
             return
 
         request = HTTPRequestHandler(data)
-        # print ("Received request ", data)
+
         # When a request comes in, we open a connection to the upstream server
         if request.is_parsed():
-            host, port = request.get_host_port() 
-            # print ("Server host, port ", host, port)
+            host, port = request.get_host_port()
 
-        self.server = Server(host, port)
-        self.server.connect()
-        self.server.queue(data)
+        if port == 443 and request.command == 'CONNECT':
+            self.server = Server(host, port)
+            self.server.connect()
+            self.server.queue(data)
 
     def _process_response(self, data):
         self.client.queue(data)
@@ -191,7 +194,7 @@ class Proxy(multiprocessing.Process):
         return False
 
     def run(self):
-        try:
+        try: 
             self._process()
         except KeyboardInterrupt:
             pass
@@ -200,31 +203,35 @@ class Proxy(multiprocessing.Process):
         finally:
             logger.debug('closing client connection')
 
-class Http(object):
-    
-    def __init__(self, hostname='127.0.0.1', port=8899, backlog=50):
+class Https(object):
+
+    def __init__(self, hostname='127.0.0.1', port=8898, backlog=50):
         self.hostname = hostname
         self.port = port
         self.backlog = backlog
 
     def run(self):
+        # https://docs.python.org/3/library/ssl.html#server-side-operation
+        print('Starting proxy server at host %s port %s' % (self.hostname, self.port))
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind((self.hostname, self.port))
+        sock.listen(self.backlog)
 
-       print('Starting proxy server at host %s port %s' % (self.hostname, self.port))
-       self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-       self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-       self.socket.bind((self.hostname, self.port))
-       self.socket.listen(self.backlog)
+        passphrase = 'arunpalaniappan'
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS) 
+        context.load_cert_chain(certfile='cert.pem', keyfile='key.pem', password=passphrase)
+        ssock = context.wrap_socket(sock, server_side=True)
 
-       while True:
-           conn, addr = self.socket.accept()
-           logger.info("Accepted a connection at %r at address %r" % (conn, addr))
-           client = Client(conn, addr)
-           proc = Proxy(client) 
-           proc.start()
+        while True:
+            conn_socket, fromaddr = ssock.accept() 
+            logger.info("Accepted a connection at %r at address %r" % (conn_socket, fromaddr))
+            client = Client(conn_socket, fromaddr)
+            proc = Proxy(client)
+            proc.start()
  
-       self.socket.close()
+        self.ssock.close()
                 
 if __name__ == "__main__":
-    http = Http()
-    http.run()
-
+    https = Https()
+    https.run()
